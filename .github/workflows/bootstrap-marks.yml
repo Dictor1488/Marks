@@ -23,6 +23,7 @@ jobs:
         run: |
           python repo_split.py --target marks --root . --source source/Masters-Marks-backup-before-split
           rm -rf source source.zip repo_split.py
+          git checkout -- .github/workflows
       - name: Commit Marks repository
         run: |
           git config user.name github-actions[bot]
