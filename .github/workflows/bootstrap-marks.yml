@@ -2,9 +2,6 @@ name: Bootstrap Marks repository
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - '.github/workflows/bootstrap-marks.yml'
 
 permissions:
   contents: write
@@ -23,11 +20,15 @@ jobs:
         run: |
           python repo_split.py --target marks --root . --source source/Masters-Marks-backup-before-split
           rm -rf source source.zip repo_split.py
-          git checkout -- .github/workflows
+          mkdir -p .github/workflows
+          find .github/workflows -type f ! -name 'bootstrap-marks.yml' -delete
+          git checkout -- .github/workflows/bootstrap-marks.yml
       - name: Commit Marks repository
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A
+          git reset -- .github/workflows/release.yml 2>/dev/null || true
+          rm -f .github/workflows/release.yml
           git diff --cached --quiet || git commit -m "Initialize standalone Marks mod"
           git push origin main
