@@ -1,6 +1,7 @@
 name: Build and Release Marks
 
 on:
+  pull_request:
   push:
     tags:
       - "v*"
@@ -59,6 +60,9 @@ jobs:
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
             $version = "${{ inputs.version }}"
             $gameVersion = "${{ inputs.game_version }}"
+          } elseif ("${{ github.event_name }}" -eq "pull_request") {
+            $version = "0.0.0-ci"
+            $gameVersion = "2.2.0.2"
           } else {
             $version = "${{ github.ref_name }}".TrimStart("v")
             $gameVersion = "2.2.0.2"
@@ -230,6 +234,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub release
+        if: github.event_name != 'pull_request'
         uses: ncipollo/release-action@v1.14.0
         with:
           tag: v${{ env.PROJECT_VERSION }}
