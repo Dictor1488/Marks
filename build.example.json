@@ -1,0 +1,18 @@
+{
+  "version": 5,
+  "software": {
+    "animate": "",
+    "python": "C:/Python27/python.exe"
+  },
+  "game": {
+    "force": false,
+    "folder": "",
+    "version": "2.2.0.2"
+  },
+  "info": {
+    "id": "me.under_pressure.marks",
+    "name": "Marks",
+    "description": "Marks of Excellence progress mod",
+    "version": "0.1.0"
+  }
+}

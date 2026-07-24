@@ -1,0 +1,256 @@
+name: Build and Release Marks
+
+on:
+  pull_request:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Mod version"
+        required: true
+        default: "0.1.0"
+      game_version:
+        description: "World of Tanks version folder"
+        required: true
+        default: "2.2.0.2"
+
+permissions:
+  contents: write
+
+env:
+  FLEX_VERSION: "4.16.1"
+  FLASH_PLAYER_VERSION: "32.0"
+  SWF_VERSION: "39"
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Python 2.7
+        shell: pwsh
+        run: choco install python2 -y --no-progress
+
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "11"
+
+      - name: Install build dependencies
+        run: python -m pip install -r requirements-build.txt
+
+      - name: Validate repository
+        run: python tools/debug_check.py
+
+      - name: Determine build metadata
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $version = "${{ inputs.version }}"
+            $gameVersion = "${{ inputs.game_version }}"
+          } elseif ("${{ github.event_name }}" -eq "pull_request") {
+            $version = "0.0.0-ci"
+            $gameVersion = "2.2.0.2"
+          } else {
+            $version = "${{ github.ref_name }}".TrimStart("v")
+            $gameVersion = "2.2.0.2"
+          }
+
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "Mod version is empty"
+          }
+          if ([string]::IsNullOrWhiteSpace($gameVersion)) {
+            throw "Game version is empty"
+          }
+
+          "PROJECT_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "GAME_VERSION=$gameVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Download Apache Flex SDK
+        shell: pwsh
+        run: |
+          $urls = @(
+            "https://downloads.apache.org/flex/${{ env.FLEX_VERSION }}/binaries/apache-flex-sdk-${{ env.FLEX_VERSION }}-bin.zip",
+            "https://archive.apache.org/dist/flex/${{ env.FLEX_VERSION }}/binaries/apache-flex-sdk-${{ env.FLEX_VERSION }}-bin.zip"
+          )
+
+          Remove-Item flex-sdk.zip -Force -ErrorAction SilentlyContinue
+          $downloaded = $false
+          foreach ($url in $urls) {
+            Write-Host "Downloading Flex SDK from $url"
+            & curl.exe -L --fail --retry 3 --retry-delay 2 --connect-timeout 30 --max-time 600 --output flex-sdk.zip $url
+            if ($LASTEXITCODE -eq 0 -and (Test-Path flex-sdk.zip)) {
+              $size = (Get-Item flex-sdk.zip).Length
+              if ($size -gt 50000000) {
+                Write-Host "Downloaded Flex SDK archive: $size bytes"
+                $downloaded = $true
+                break
+              }
+              Write-Warning "Downloaded archive is unexpectedly small: $size bytes"
+            }
+            Remove-Item flex-sdk.zip -Force -ErrorAction SilentlyContinue
+          }
+          if (-not $downloaded) {
+            throw "Unable to download a valid Apache Flex SDK archive"
+          }
+
+          Remove-Item C:\flex-sdk -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path C:\flex-sdk -Force | Out-Null
+          & tar.exe -xf flex-sdk.zip -C C:\flex-sdk
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to extract Apache Flex SDK"
+          }
+          Remove-Item flex-sdk.zip -Force
+
+          if (-not (Test-Path C:\flex-sdk\bin\mxmlc.bat)) {
+            $nestedCompiler = Get-ChildItem C:\flex-sdk -Filter mxmlc.bat -Recurse | Select-Object -First 1
+            if ($null -eq $nestedCompiler) {
+              throw "mxmlc.bat was not found after Flex SDK extraction"
+            }
+            $nestedRoot = Split-Path (Split-Path $nestedCompiler.FullName -Parent) -Parent
+            Get-ChildItem $nestedRoot | Move-Item -Destination C:\flex-sdk -Force
+          }
+
+      - name: Configure playerglobal
+        shell: pwsh
+        run: |
+          $source = Resolve-Path "as3\libs\playerglobal.swc"
+          $versionDir = "C:\flex-sdk\frameworks\libs\player\${{ env.FLASH_PLAYER_VERSION }}"
+          New-Item -ItemType Directory -Path $versionDir -Force | Out-Null
+          Copy-Item $source "$versionDir\playerglobal.swc" -Force
+          Copy-Item $source "C:\flex-sdk\frameworks\libs\player\playerglobal.swc" -Force
+
+          $flexConfig = "C:\flex-sdk\frameworks\flex-config.xml"
+          $content = Get-Content $flexConfig -Raw
+          $content = $content -replace '\{playerglobalHome\}', 'C:/flex-sdk/frameworks/libs/player'
+          Set-Content -Path $flexConfig -Value $content -Encoding utf8
+
+      - name: Build Marks SWF files
+        shell: pwsh
+        run: |
+          $mxmlc = "C:\flex-sdk\bin\mxmlc.bat"
+          if (-not (Test-Path $mxmlc)) {
+            throw "mxmlc not found: $mxmlc"
+          }
+
+          $sourcePath = (Resolve-Path "as3\src_flash\src").Path
+          $outputPath = Join-Path $PWD "as3\bin"
+          New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
+
+          $libraryArgs = @()
+          Get-ChildItem "as3\libs" -Filter "*.swc" | ForEach-Object {
+            if ($_.Name -eq "playerglobal.swc") {
+              $libraryArgs += "-library-path+=$($_.FullName)"
+            } else {
+              $libraryArgs += "-external-library-path+=$($_.FullName)"
+            }
+          }
+
+          $targets = @(
+            @{
+              Source = Join-Path $sourcePath "com\under_pressure\mastery\MarksPanelHangar.as"
+              Output = Join-Path $outputPath "MarksPanelHangar.swf"
+            },
+            @{
+              Source = Join-Path $sourcePath "com\under_pressure\mastery\MarksPanelBattle.as"
+              Output = Join-Path $outputPath "MarksPanelBattle.swf"
+            }
+          )
+
+          foreach ($target in $targets) {
+            if (-not (Test-Path $target.Source)) {
+              throw "AS3 entry point not found: $($target.Source)"
+            }
+
+            $arguments = @(
+              "-source-path+=$sourcePath",
+              "-output=$($target.Output)",
+              "-target-player=${{ env.FLASH_PLAYER_VERSION }}",
+              "-swf-version=${{ env.SWF_VERSION }}",
+              "-strict=true",
+              "-optimize=true",
+              "-warnings=true"
+            ) + $libraryArgs + @("--", $target.Source)
+
+            & $mxmlc @arguments
+            if ($LASTEXITCODE -ne 0) {
+              throw "AS3 compilation failed for $($target.Source)"
+            }
+            if (-not (Test-Path $target.Output)) {
+              throw "SWF was not created: $($target.Output)"
+            }
+          }
+
+          Get-ChildItem $outputPath -Filter "*.swf" | Format-Table Name, Length
+
+      - name: Create build configuration
+        shell: pwsh
+        run: |
+          $config = @{
+            version = 5
+            software = @{
+              animate = ""
+              python = "C:/Python27/python.exe"
+            }
+            game = @{
+              force = $false
+              folder = ""
+              version = $env:GAME_VERSION
+            }
+            info = @{
+              id = "me.under_pressure.marks"
+              name = "Marks"
+              description = "Marks of Excellence progress mod"
+              version = $env:PROJECT_VERSION
+            }
+          } | ConvertTo-Json -Depth 4
+          Set-Content -Path build.json -Value $config -Encoding utf8
+
+      - name: Build package
+        run: python build.py --distribute
+
+      - name: Verify artifacts
+        shell: pwsh
+        run: |
+          $wotmods = Get-ChildItem build -Filter "*.wotmod" -ErrorAction SilentlyContinue
+          $archives = Get-ChildItem build -Filter "*.zip" -ErrorAction SilentlyContinue
+          if (-not $wotmods) {
+            throw "No .wotmod artifact was produced"
+          }
+          if (-not $archives) {
+            throw "No distribution .zip artifact was produced"
+          }
+          Get-ChildItem build | Format-Table Name, Length
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Marks-${{ env.PROJECT_VERSION }}
+          path: |
+            build/*.wotmod
+            build/*.zip
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: github.event_name != 'pull_request'
+        uses: ncipollo/release-action@v1.14.0
+        with:
+          tag: v${{ env.PROJECT_VERSION }}
+          commit: ${{ github.sha }}
+          artifacts: "build/*.wotmod,build/*.zip"
+          allowUpdates: true
+          removeArtifacts: true
+          makeLatest: true
+          token: ${{ secrets.GITHUB_TOKEN }}
