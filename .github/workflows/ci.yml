@@ -41,6 +41,7 @@ jobs:
           path: |
             validation.txt
             scaleform-results-refs.txt
+            python/gui/mods/mod_under_pressure_marks.py
           if-no-files-found: error
           retention-days: 1
 
