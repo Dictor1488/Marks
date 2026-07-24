@@ -16,20 +16,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Collect Python source
+      - name: Collect repository source
         shell: bash
         run: |
           mkdir -p export
-          find . -type f -name '*.py' -not -path './.git/*' -print0 | while IFS= read -r -d '' file; do
-            mkdir -p "export/$(dirname "$file")"
-            cp "$file" "export/$file"
-          done
-          find export -type f -name '*.py' -print | sort > export/python-files.txt
+          tar --exclude='./.git' --exclude='./export' --exclude='./.github/workflows/export-source.yml' -cf - . | tar -xf - -C export
+          find export -type f -print | sort > export/all-files.txt
 
       - name: Upload source
         uses: actions/upload-artifact@v4
         with:
-          name: marks-python-source
+          name: marks-full-source
           path: export
           if-no-files-found: error
           retention-days: 1
