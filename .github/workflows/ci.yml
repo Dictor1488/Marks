@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate:
@@ -18,50 +18,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: agent/clean-marks
-          fetch-depth: 0
           show-progress: false
 
-      - name: Apply pending one-time cleanup
-        if: hashFiles('tools/apply_runtime_cleanup.py') != ''
-        shell: bash
-        run: |
-          python3 tools/apply_runtime_cleanup.py
-          rm -f tools/apply_runtime_cleanup.py
-          rm -f .github/workflows/apply-runtime-cleanup.yml
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add -A
-          if ! git diff --cached --quiet; then
-            git commit -m "Remove obsolete Marks results injector"
-            git push origin agent/clean-marks
-          fi
-
       - name: Run repository validation
-        id: validation
-        shell: bash
-        run: |
-          set +e
-          python3 tools/debug_check.py > validation.txt 2>&1
-          status=$?
-          grep -nE '(_LINKAGE_RESULTS|_SWF_RESULTS|MarksPanelResults)' \
-            python/gui/mods/mod_under_pressure_marks.py > scaleform-results-refs.txt || true
-          cat validation.txt
-          echo "status=$status" >> "$GITHUB_OUTPUT"
-          exit 0
-
-      - name: Upload validation report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: marks-validation-report
-          path: |
-            validation.txt
-            scaleform-results-refs.txt
-            python/gui/mods/mod_under_pressure_marks.py
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Fail when validation failed
-        if: steps.validation.outputs.status != '0'
-        run: exit 1
+        run: python3 tools/debug_check.py
