@@ -1,0 +1,30 @@
+# Local build configuration
+build.json
+
+# Build outputs
+build/
+temp/
+*.wotmod
+*.zip
+as3/bin/*.swf
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Adobe Animate / FlashDevelop outputs
+as3/DataStore/
+build-*.jsfl
+*.log
+EvalScript error.tmp
+
+# One-time repository split artifacts
+source/
+source.zip
+repo_split.py
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
