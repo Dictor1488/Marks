@@ -21,4 +21,29 @@ jobs:
           show-progress: false
 
       - name: Run repository validation
-        run: python3 tools/debug_check.py
+        id: validation
+        shell: bash
+        run: |
+          set +e
+          python3 tools/debug_check.py > validation.txt 2>&1
+          status=$?
+          grep -nE '(_LINKAGE_RESULTS|_SWF_RESULTS|MarksPanelResults)' \
+            python/gui/mods/mod_under_pressure_marks.py > scaleform-results-refs.txt || true
+          cat validation.txt
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: marks-validation-report
+          path: |
+            validation.txt
+            scaleform-results-refs.txt
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Fail when validation failed
+        if: steps.validation.outputs.status != '0'
+        run: exit 1
