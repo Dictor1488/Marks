@@ -239,7 +239,7 @@ for path in ROOT.rglob("*"):
         text = path.read_text(encoding="utf-8-sig", errors="ignore")
     except OSError:
         continue
-    if "Masters-Marks" in text:
+    if "Masters" + "-Marks" in text:
         add_error(path, "obsolete combined-repository reference remains")
 
 if errors:

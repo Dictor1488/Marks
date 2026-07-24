@@ -107,10 +107,8 @@ __version__ = '0.1.0'
 
 _LINKAGE_HANGAR = 'MarksPanelHangar'
 _LINKAGE_BATTLE = 'MarksPanelBattle'
-_LINKAGE_RESULTS = 'MarksPanelResults'
 _SWF_HANGAR = 'MarksPanelHangar.swf'
 _SWF_BATTLE = 'MarksPanelBattle.swf'
-_SWF_RESULTS = 'MarksPanelResults.swf'
 
 _L10N_DIR = 'mods/under_pressure.marks'
 _L10N_FALLBACK = 'en'
@@ -1232,10 +1230,6 @@ class MarksPanelBattleView(MasteryPanelInjectorView):
     _viewKind = 'battle'
 
 
-class MarksPanelResultsView(MasteryPanelInjectorView):
-    _viewKind = 'results'
-
-
 def _registerFlash():
     for linkage, viewCls, swf in ((_LINKAGE_HANGAR, MarksPanelHangarView, _SWF_HANGAR),(_LINKAGE_BATTLE, MarksPanelBattleView, _SWF_BATTLE)):
         g_entitiesFactories.addSettings(ViewSettings(linkage, viewCls, swf, WindowLayer.WINDOW, None, ScopeTemplates.GLOBAL_SCOPE))
@@ -1256,8 +1250,6 @@ class MasteryController(object):
         self._injectPending = False
         self._battleInjectorView = None
         self._battlePanelReady   = False
-        self._resultInjectorView = None
-        self._resultPanelReady   = False
         self._enabled       = False
         self._hangarVisible = False
         self._visibleByData = False
@@ -1299,7 +1291,6 @@ class MasteryController(object):
         self._battleKillCamBound   = False
         self._battleKillCamCtrl    = None
         self._battleResultsOpen    = False
-        self._pendingBattleResultProgress = None
         self._battleMode           = False
         self._battleTankID         = None
         self._battleLiveDamage = 0
@@ -1588,8 +1579,6 @@ class MasteryController(object):
         else:
             logger.debug('mark retry: keep pre-battle baseline for tankID=%s until results', tankID)
         self._refresh()
-        if self._battleResultsOpen:
-            self._syncBattleResultProgress()
         if self._battleMode and self._battleTankID == tankID:
             self._pushBattleBadge()
         if attempt < 8:
@@ -2353,24 +2342,12 @@ class MasteryController(object):
         logger.debug('battle: account=%s tankID=%s mark=%.2f delta=%+.2f dmg=%d map=%s history=%d update=%s',
                      self._currentAccountDBID, tankID, value, delta, damage, entryMap,
                      len(history), existing is not None)
-        if not provisional:
-            self._pushBattleResultProgress(value, delta)
         if (self._enabled and self._panelReady
                 and g_currentVehicle.isPresent()
                 and getattr(g_currentVehicle.item, 'intCD', None) == tankID):
             self._refresh()
             if self._detailOpen:
                 self._pushDetail()
-
-    def _pushBattleResultProgress(self, currentMark, delta):
-        self._pendingBattleResultProgress = (float(currentMark), float(delta))
-        logger.debug('battle result progress queued: mark=%.2f delta=%+.2f open=%s',
-                     currentMark, delta, self._battleResultsOpen)
-        if self._battleResultsOpen:
-            self._syncBattleResultProgress()
-
-    def _syncBattleResultProgress(self):
-        pass
 
     def _subscribeWindowEvents(self):
         try:
@@ -2457,14 +2434,7 @@ class MasteryController(object):
             self._hangarVisible = False
             self._lastVisibleState = None
             self._updateVisibility()
-            self._syncBattleResultProgress()
         else:
-            self._pendingBattleResultProgress = None
-            if self._resultInjectorView:
-                try:
-                    self._resultInjectorView.flashObject.as_setBattleResultProgressVisible(False)
-                except Exception:
-                    pass
             BigWorld.callback(0.3, self._restoreHangarPanelAfterResults)
 
     def _restoreHangarPanelAfterResults(self):
@@ -2621,9 +2591,6 @@ class MasteryController(object):
         if attempt < _INJECT_MAX_ATTEMPTS:
             BigWorld.callback(_INJECT_RETRY_DELAY, lambda: self._injectBattleFlash(attempt + 1))
 
-    def _injectResultsFlash(self, attempt=0):
-        pass
-
     def _injectFlash(self, attempt=0):
         if not self._enabled or self._battleMode:
             return
@@ -2648,10 +2615,6 @@ class MasteryController(object):
             self._battleInjectorView = view
             self._battlePanelReady = False
             logger.debug('battle injector ready')
-        elif kind == 'results':
-            self._resultInjectorView = view
-            self._resultPanelReady = False
-            logger.debug('results injector ready')
         else:
             self._injectorView = view
             self._panelReady = False
@@ -2663,9 +2626,6 @@ class MasteryController(object):
             self._battleInjectorView = None
             self._battlePanelReady = False
             self._lastBattleVisibleState = None
-        elif view is not None and view == self._resultInjectorView:
-            self._resultInjectorView = None
-            self._resultPanelReady = False
         elif view is not None and view == self._injectorView:
             self._injectorView = None
             self._panelReady = False
@@ -2678,8 +2638,6 @@ class MasteryController(object):
             self._battleInjectorView = None
             self._battlePanelReady = False
             self._lastBattleVisibleState = None
-            self._resultInjectorView = None
-            self._resultPanelReady = False
             self._lastVisibleState = None
         else:
             logger.debug('injector disposed: ignoring orphan view')
@@ -2701,19 +2659,6 @@ class MasteryController(object):
             self._battleBadgeShowCallbackId = BigWorld.callback(
                 2.0, self._onBattleBadgeDelayedShow)
             return
-        if view is not None and view == self._resultInjectorView:
-            self._resultPanelReady = True
-            logger.debug('results panel ready')
-            try:
-                self._resultInjectorView.flashObject.as_setLocalization({
-                    'battleResultProgress': _tr('battleResultProgress', u'Marks progress'),
-                })
-                self._resultInjectorView.flashObject.as_setVisible(False)
-            except Exception:
-                logger.exception('results panel init calls failed')
-            self._syncBattleResultProgress()
-            return
- 
         if view is not None and view is not self._injectorView:
             logger.debug('panel ready: ignoring orphan hangar view')
             return
@@ -2752,8 +2697,6 @@ class MasteryController(object):
             except Exception:
                 logger.exception('panel init calls failed')
         self._refresh()
-        if self._battleResultsOpen:
-            self._syncBattleResultProgress()
         if not self._hangarVisible and not self._battleMode:
             try:
                 lsm = getLobbyStateMachine()
