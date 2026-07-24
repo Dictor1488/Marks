@@ -82,36 +82,46 @@ jobs:
         shell: pwsh
         run: |
           $urls = @(
-            "https://archive.apache.org/dist/flex/${{ env.FLEX_VERSION }}/binaries/apache-flex-sdk-${{ env.FLEX_VERSION }}-bin.zip",
-            "https://dlcdn.apache.org/flex/${{ env.FLEX_VERSION }}/binaries/apache-flex-sdk-${{ env.FLEX_VERSION }}-bin.zip"
+            "https://downloads.apache.org/flex/${{ env.FLEX_VERSION }}/binaries/apache-flex-sdk-${{ env.FLEX_VERSION }}-bin.zip",
+            "https://archive.apache.org/dist/flex/${{ env.FLEX_VERSION }}/binaries/apache-flex-sdk-${{ env.FLEX_VERSION }}-bin.zip"
           )
 
+          Remove-Item flex-sdk.zip -Force -ErrorAction SilentlyContinue
           $downloaded = $false
           foreach ($url in $urls) {
-            try {
-              Invoke-WebRequest -Uri $url -OutFile flex-sdk.zip -UseBasicParsing -TimeoutSec 300
-              $downloaded = $true
-              break
-            } catch {
-              Write-Warning "Flex download failed from $url: $_"
+            Write-Host "Downloading Flex SDK from $url"
+            & curl.exe -L --fail --retry 3 --retry-delay 2 --connect-timeout 30 --max-time 600 --output flex-sdk.zip $url
+            if ($LASTEXITCODE -eq 0 -and (Test-Path flex-sdk.zip)) {
+              $size = (Get-Item flex-sdk.zip).Length
+              if ($size -gt 50000000) {
+                Write-Host "Downloaded Flex SDK archive: $size bytes"
+                $downloaded = $true
+                break
+              }
+              Write-Warning "Downloaded archive is unexpectedly small: $size bytes"
             }
+            Remove-Item flex-sdk.zip -Force -ErrorAction SilentlyContinue
           }
           if (-not $downloaded) {
-            throw "Unable to download Apache Flex SDK"
+            throw "Unable to download a valid Apache Flex SDK archive"
           }
 
-          Remove-Item C:\flex-sdk, C:\flex-sdk-temp -Recurse -Force -ErrorAction SilentlyContinue
-          Expand-Archive flex-sdk.zip -DestinationPath C:\flex-sdk-temp -Force
+          Remove-Item C:\flex-sdk -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Path C:\flex-sdk -Force | Out-Null
-
-          $items = Get-ChildItem C:\flex-sdk-temp
-          if ($items.Count -eq 1 -and $items[0].PSIsContainer) {
-            Get-ChildItem $items[0].FullName | Move-Item -Destination C:\flex-sdk -Force
-          } else {
-            Get-ChildItem C:\flex-sdk-temp | Move-Item -Destination C:\flex-sdk -Force
+          & tar.exe -xf flex-sdk.zip -C C:\flex-sdk
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to extract Apache Flex SDK"
           }
+          Remove-Item flex-sdk.zip -Force
 
-          Remove-Item flex-sdk.zip, C:\flex-sdk-temp -Recurse -Force -ErrorAction SilentlyContinue
+          if (-not (Test-Path C:\flex-sdk\bin\mxmlc.bat)) {
+            $nestedCompiler = Get-ChildItem C:\flex-sdk -Filter mxmlc.bat -Recurse | Select-Object -First 1
+            if ($null -eq $nestedCompiler) {
+              throw "mxmlc.bat was not found after Flex SDK extraction"
+            }
+            $nestedRoot = Split-Path (Split-Path $nestedCompiler.FullName -Parent) -Parent
+            Get-ChildItem $nestedRoot | Move-Item -Destination C:\flex-sdk -Force
+          }
 
       - name: Configure playerglobal
         shell: pwsh
